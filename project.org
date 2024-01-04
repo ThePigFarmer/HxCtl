@@ -1,0 +1,68 @@
+#+title: HxOrg
+#+author: Alan Wedel
+
+#+description: Management for the HxCtl project
+
+* Software
+** Main controller
+*** DONE remove the millis() timer from HydralicCircuit
+*** DONE add hydralicCircuitsLastLoopTime
+*** DONE make the alarm do its thing for case and charge pressure
+*** DONE merge code in "test" into button library YES!
+*** DONE make brightness button not toggle page
+*** DONE split case and charge functions
+*** DONE make charge beeper shut off after a second
+*** DONE add startup timer to charge control
+*** DONE clear bottom of lcd on refresh to avoid sorry 5345 psi case pressures when it is only 53 psi
+*** DONE calculate the factor and test it
+factor = 1.6 and min_in = 102.3
+*** DONE make rawInToPSI
+*** TODO test the rawInToPSI() implementation
+*** TODO decide if we need float on any thing
+
+* Hardware
+** DONE build transistor circuit for beeper and wire it so it gets 9v instead of 5.
+** DONE Buy or build a shield that will plug into mega2560 and have terminal blocks (screw)
+** DONE get power regulated (just calculated that built in power regular will work)
+** DONE debug lcd backlight driver
+** DONE get solder out of connection
+** DONE get resume switches ordered
+** DONE design enclosure #consult.david
+** DONE get bottom printed
+** DONE get top piece printed
+** DONE get front cover cut
+** DONE see if we want bottom reprint
+** DONE get standoffs and lcd seal designed
+** DONE get them printed
+** DONE cut plate
+** TODO mount components
+** TODO figure lcd position
+** TODO attach switches
+** TODO attach and lable wires
+** TODO cut box down
+** TODO test
+
+
+* Sensor calibration
+|------------------------+---------------|
+| volt range             | 0 - 5         |
+| arduino range          | 0 - 1023      |
+|------------------------+---------------|
+| sensor range (volt)    | .5 - 4.5      |
+| sensor range (arduino) | 102.3 - 920.7 |
+|------------------------+---------------|
+
+#+begin_src python
+
+psi = (raw_in - min) * factor
+
+print(f"psi = {psi}")
+#+end_src
+
+* money
+** TODO add resources for lcd insert
+| what for                             | price (usd) |
+|--------------------------------------+-------------|
+| hammond enclosure from mouser        |          50 |
+| designing and 3d printing end plates |          30 |
+|                                      |             |

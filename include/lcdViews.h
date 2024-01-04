@@ -1,0 +1,8 @@
+#ifndef LCD_PAGES_h
+#define LCD_PAGES_h
+
+#define VIEW_CASE_PRESSURES 0
+#define VIEW_CHARGE_PRESSURES 1
+#define VIEW_SYSTEM_PRESSURES 2
+
+#endif

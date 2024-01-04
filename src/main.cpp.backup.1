@@ -1,0 +1,353 @@
+#include <Arduino.h>
+
+#include "lcdViews.h"
+#include "pins.h"
+#include <AirSolinoid.h>
+#include <Arduino.h>
+#include <Button.h>
+#include <DigitalOutput.h>
+#include <HydralicCircuit.h>
+#include <LiquidCrystal_I2C.h>
+#include <Streaming.h>
+
+#define MAIN_LOOP_DELAY 1000
+#define NUMBER_OF_HYDRALIC_CIRCUITS 4
+
+// #define QUIET_MODE //No buzzer, for testing
+
+AirSolinoid airSolinoid(AIR_SOLINOID_PIN, false);
+
+Button uiButton(UI_BUTTON_PIN, 10, 500);
+Button resumeSwitch(RESUME_SWITCH_PIN, 10, 65535);
+
+DigitalOutput alarmBuzzer(ALARM_BUZZER_PIN, false);
+
+HydralicCircuit chainRight(A0, A1, A2);
+HydralicCircuit chainLeft(A3, A4, A5);
+HydralicCircuit spinnerRight(A6, A7, A8);
+HydralicCircuit spinnerLeft(A9, A10, A11);
+
+// 16 * 4 lcd display
+// LiquidCrystal lcd(12, 11, 10, 5, 4, 3, 2);
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+// timer for loop
+uint32_t mainLastLoopTime;
+
+// charge pressure issue alerts for 2 seconds
+uint32_t alertChargePressureStartTime;
+
+// hydralic circuit stuff
+void hydralicCircuitsSetup();
+void hydralicCircuitsLoop();
+
+// lcd stuff
+uint16_t lcdBacklightBrightnessLevel[3] = {30, 90, 255};
+void lcdSetup(uint8_t backlightPin);
+void lcdSetupView();
+void lcdGotoNextBrightness();
+void lcdGotoNextView();
+void lcdLoop();
+void lcdUpdateBrightnessLevel();
+// currents
+int8_t lcdCurrentLcdBrightnessIndex = 2;
+uint8_t lcdCurrentView = VIEW_CHARGE_PRESSURES;
+
+uint32_t ptoEngageTime;
+
+// air solinoid stuff
+void airSolinoidToggle();
+
+void pressureMonitoringSystemLoop();
+
+void casePressureLoop();
+void chargePressureLoop();
+
+bool caseAlert;
+bool chargeAlert;
+
+bool chargePressureFailed; // true if lowChargePSI occured
+
+void alarmLoop(bool caseAlert);
+
+uint32_t alarmChargeAlertStartTime;
+bool alertChargePressureIsRunning;
+
+void userInputLoop();
+
+void setup() {
+  Serial.begin(115200);
+
+  airSolinoid.begin();
+  airSolinoid.off(); // make sure it is off on startup
+
+  hydralicCircuitsSetup();
+  lcdSetup(LCD_BACKLIGHT_PIN);
+  lcdSetupView();
+}
+
+void loop() {
+
+  // hydralic circuit loop
+  if ((millis() - mainLastLoopTime) > MAIN_LOOP_DELAY) {
+    mainLastLoopTime = millis();
+    hydralicCircuitsLoop();
+    chargePressureLoop();
+    casePressureLoop();
+
+    lcdLoop();
+  }
+
+  alarmLoop(caseAlert); // more professional if this is instant
+
+  userInputLoop();
+}
+
+void hydralicCircuitsSetup() {
+  // set calibration
+  chainRight.calibrate(99, 420, 4800);
+  chainLeft.calibrate(99, 420, 4800);
+  spinnerRight.calibrate(99, 420, 4800);
+  spinnerLeft.calibrate(99, 420, 4800);
+}
+
+void hydralicCircuitsLoop() {
+  chainRight.run();
+  chainLeft.run();
+  spinnerRight.run();
+  spinnerLeft.run();
+}
+
+// -----------------------------------------------------------------------------
+// lcd stuff here
+// -----------------------------------------------------------------------------
+
+void lcdGotoNextBrightness() {
+  lcdCurrentLcdBrightnessIndex--;
+  if (lcdCurrentLcdBrightnessIndex <= -1) {
+    lcdCurrentLcdBrightnessIndex = 2;
+  }
+
+  lcdUpdateBrightnessLevel();
+}
+
+void lcdSetup(uint8_t backlightPin) {
+  lcd.init();
+  lcd.clear();
+
+  // now start the pwm for variable brightness
+  pinMode(backlightPin, OUTPUT);
+  lcdUpdateBrightnessLevel();
+
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd << "PRECISION";
+  delay(600);
+  lcd.setCursor(8, 1);
+  lcd << "AG";
+  delay(300);
+  lcd.setCursor(8, 1);
+  lcd << "  ";
+  lcd.setCursor(8, 2);
+  lcd << "AG";
+  delay(600);
+  lcd.setCursor(8, 2);
+  lcd << "  ";
+  lcd.setCursor(8, 1);
+  lcd << "AG";
+  delay(500);
+  lcd.setCursor(9, 2);
+  lcd.print("SPREADERS");
+  delay(1200);
+}
+
+void lcdLoop() {
+  char buffer[22] = " "; // bottom row on lcd
+
+  switch (lcdCurrentView) {
+
+  case VIEW_CASE_PRESSURES:
+    sprintf(buffer, " %2u  %2u     %2u  %2u", spinnerLeft.casePSI,
+            spinnerRight.casePSI, chainLeft.casePSI, chainRight.casePSI);
+    break;
+
+  case VIEW_CHARGE_PRESSURES:
+    sprintf(buffer, " %3u %3u    %3u %3u", spinnerLeft.chargePSI,
+            spinnerRight.chargePSI, chainLeft.chargePSI, chainRight.chargePSI);
+    break;
+
+  case VIEW_SYSTEM_PRESSURES:
+    sprintf(buffer, "%4u %4u  %4u %4u", spinnerLeft.systemPSI,
+            spinnerRight.systemPSI, chainLeft.systemPSI, chainRight.systemPSI);
+    break;
+  }
+
+  lcd.setCursor(0, 3);
+  lcd.print(buffer);
+
+  Serial << "bottom of lcd: [" << buffer << "]" << endl;
+}
+
+void lcdSetupView() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  switch (lcdCurrentView) {
+  case VIEW_CASE_PRESSURES:
+    lcd.println("   Case Pressures   ");
+    break;
+
+  case VIEW_CHARGE_PRESSURES:
+    lcd.println("  Charge Pressures  ");
+    break;
+
+  case VIEW_SYSTEM_PRESSURES:
+    lcd.println("  System Pressures  ");
+    break;
+  }
+
+  lcd.setCursor(0, 1);
+  lcd.print("spinners    chains");
+  lcd.setCursor(0, 2);
+  lcd.print("  L   R      L   R");
+}
+
+void lcdGotoNextView() {
+  lcdCurrentView++;
+  if (lcdCurrentView >= 3) {
+    lcdCurrentView = 0;
+  }
+
+  lcdSetupView();
+}
+
+// -----------------------------------------------------------------------------
+// pressure monitoring system
+// -----------------------------------------------------------------------------
+
+void casePressureLoop() {
+  if (airSolinoid.status() == HIGH) {
+    Serial << "AirSolinoid is on\n";
+
+    // see if bad things happened
+    bool highCasePSIOccured = false;
+
+    bool highCasePSI[4] = {spinnerLeft.highCasePSI, spinnerRight.highCasePSI,
+                           chainLeft.highCasePSI, chainRight.highCasePSI};
+
+    for (uint8_t i = 0; i < NUMBER_OF_HYDRALIC_CIRCUITS; i++) {
+
+      // maybe there is a better way to do this
+
+      if (highCasePSIOccured) {
+        // do nothing... it has already done it before...
+      } else if (highCasePSI[i]) {
+        highCasePSIOccured = true;
+      }
+    }
+
+    caseAlert = highCasePSIOccured; // it is more uniform this way
+
+    // run alarm
+  } else {
+    caseAlert = false;
+  }
+}
+
+void chargePressureLoop() {
+
+  if (airSolinoid.status() == HIGH) {
+
+    if ((millis() - ptoEngageTime) > 2000) {
+      // see if bad things happened
+      bool lowChargePSIOccured = false;
+
+      bool lowChargePSI[4] = {spinnerLeft.lowChargePSI,
+                              spinnerRight.lowChargePSI, chainLeft.lowChargePSI,
+                              chainRight.lowChargePSI};
+
+      for (uint8_t i = 0; i < NUMBER_OF_HYDRALIC_CIRCUITS; i++) {
+
+        // maybe there is a better way to do this
+
+        if (lowChargePSIOccured) {
+          // do nothing... it has already done it before...
+        } else if (lowChargePSI[i]) {
+          lowChargePSIOccured = true;
+        }
+      }
+
+      // here is where the stuff is done
+
+      if (lowChargePSIOccured) {
+        Serial << "kill pto here\n";
+        airSolinoid.off();
+        chargePressureFailed = true;
+      }
+
+    } else {
+      Serial << "waiting for charge pressure to stabilize\n";
+    }
+  }
+}
+
+void userInputLoop() {
+
+  // main pto on/off resume switch
+  resumeSwitch.read();
+  if (resumeSwitch.wasClicked()) {
+    airSolinoidToggle();
+  }
+
+  // display/view control button
+  uiButton.read();
+  if (uiButton.wasClicked()) {
+    lcdGotoNextView();
+  }
+
+  if (uiButton.wasHeld()) {
+    lcdGotoNextBrightness();
+  }
+}
+
+void alarmLoop(bool caseAlert) {
+
+  if (chargePressureFailed) {
+    if (!alertChargePressureIsRunning) {
+      alertChargePressureStartTime = millis();
+      alertChargePressureIsRunning = true;
+      chargeAlert = true;
+    }
+  }
+
+  if (alertChargePressureIsRunning) {
+
+    if ((millis() - alertChargePressureStartTime) > 2000) {
+      chargeAlert = false;
+      chargePressureFailed = false;
+      alertChargePressureIsRunning = false;
+    }
+  }
+
+#ifndef QUIET_MODE
+  bool shouldAlert = (caseAlert || chargeAlert);
+  alarmBuzzer.write(shouldAlert);
+  Serial << "loud!\n";
+#else
+  Serial << "hush Hush\n";
+#endif
+}
+
+void lcdUpdateBrightnessLevel() {
+  analogWrite(LCD_BACKLIGHT_PIN,
+              lcdBacklightBrightnessLevel[lcdCurrentLcdBrightnessIndex]);
+  Serial << "backlight: "
+         << lcdBacklightBrightnessLevel[lcdCurrentLcdBrightnessIndex] << endl;
+}
+
+void airSolinoidToggle() {
+  airSolinoid.toggle();
+
+  if (airSolinoid.status() == HIGH) {
+    ptoEngageTime = millis();
+  }
+}

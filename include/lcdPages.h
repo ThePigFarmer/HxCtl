@@ -1,0 +1,8 @@
+#ifndef LCD_PAGES_h
+#define LCD_PAGES_h
+
+#define CASE_PRESSURES_PAGE 0
+#define CHARGE_PRESSURES_PAGE 1
+#define SYSTEM_PRESSURES_PAGE 2
+
+#endif
